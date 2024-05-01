@@ -112,6 +112,37 @@ void serverLog(int level, const char *fmt, ...) {
     serverLogRaw(level, msg);
 }
 
+static void sigShutdownHandler(int sig) {
+    char *msg;
+
+    switch (sig) {
+    case SIGINT:
+        msg = "Received SIGINT scheduling shutdown...";
+        break;
+    case SIGTERM:
+        msg = "Received SIGTERM scheduling shutdown...";
+        break;
+    default:
+        msg = "Received shutdown signal, scheduling shutdown...";
+    }
+    serverLog(LL_WARNING, "%s\n", msg);
+    exit(0);
+}
+
+void setupSignalHandlers(void) {
+    struct sigaction act;
+
+    /* When the SA_SIGINFO flag is set in sa_flags then sa_sigaction is used.
+     * Otherwise, sa_handler is used. */
+    sigemptyset(&act.sa_mask);
+    act.sa_flags = 0;
+    act.sa_handler = sigShutdownHandler;
+    sigaction(SIGTERM, &act, NULL);
+    sigaction(SIGINT, &act, NULL);
+
+    return;
+}
+
 /* Initialize a set of file descriptors to listen to the specified 'port'
  * binding the addresses specified in the Redis server configuration.
  *
@@ -167,8 +198,19 @@ int listenToPort(int port, int *fds, int *count) {
             }
         } else if (strchr(server.bindaddr[j],':')) {
             /* Bind IPv6 address. */
+            fds[*count] = anetTcp6Server(server.neterr,port,server.bindaddr[j],
+                server.tcp_backlog);
         } else {
             /* Bind IPv4 address. */
+            fds[*count] = anetTcpServer(server.neterr,port,server.bindaddr[j],
+                server.tcp_backlog);
+        }
+        if (fds[*count] == ANET_ERR) {
+            serverLog(LL_WARNING,
+                "Creating Server TCP listening socket %s:%d: %s",
+                server.bindaddr[j] ? server.bindaddr[j] : "*",
+                port, server.neterr);
+            return C_ERR;
         }
         anetNonBlock(NULL,fds[*count]);
         (*count)++;
@@ -177,8 +219,11 @@ int listenToPort(int port, int *fds, int *count) {
 }
 
 void initServer(void) {
+    int j;
+
     signal(SIGHUP, SIG_IGN);
     signal(SIGPIPE, SIG_IGN);
+    setupSignalHandlers();
 
     server.port = CONFIG_DEFAULT_SERVER_PORT;
     server.maxclients = CONFIG_DEFAULT_MAX_CLIENTS;
@@ -194,8 +239,23 @@ void initServer(void) {
     server.bindaddr_count = 0;
 
     /* Open the TCP listening socket for the user commands. */
-    if (server.port != 0 && listenToPort(server.port,server.ipfd,&server.ipfd_count) == C_ERR)
+    if (server.port != 0 && listenToPort(server.port, server.ipfd, &server.ipfd_count) == C_ERR)
         exit(1);
+    
+    /* Abort if there are no listening sockets at all. */
+    if (server.ipfd_count == 0) {
+        serverLog(LL_WARNING, "Configured to not listen anywhere, exiting.");
+        exit(1);
+    }
+
+    /* Create an event handler for accepting new connections in TCP and Unix
+     * domain sockets. */
+    for (j = 0; j < server.ipfd_count; j++) {
+        if (aeCreateFileEvent(server.el, server.ipfd[j], AE_READABLE,
+            acceptTcpHandler,NULL) == AE_ERR) {
+            serverLog(LL_WARNING,"!!! Software Failure. Press left mouse button to continue");  
+        }
+    }
 }
 
 int main(int argc, char **argv) {

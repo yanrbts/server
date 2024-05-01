@@ -1,0 +1,8 @@
+.*.swp
+*.o
+*.log
+dump.rdb
+.make-*
+.prerequisites
+*.dSYM
+Makefile.dep

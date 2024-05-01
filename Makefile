@@ -17,7 +17,7 @@ else ifeq ($(TARGET), freebsd)
 	LDFLAGS += -Wl,-E
 endif
 
-SRC  := server.c zmalloc.c ae.c localtime.c
+SRC  := server.c zmalloc.c ae.c localtime.c anet.c networking.c
 BIN  := kxykserver
 VER  ?= $(shell git describe --tags --always --dirty)
 

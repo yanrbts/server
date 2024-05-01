@@ -49,6 +49,8 @@
 /* Error codes */
 #define C_OK                            0
 #define C_ERR                           -1
+/* Anti-warning macro... */
+#define UNUSED(V)                       ((void) V)
 
 /* Log levels */
 #define LL_DEBUG                        0
@@ -61,6 +63,7 @@
 #define CONFIG_BINDADDR_MAX             16
 #define CONFIG_DEFAULT_SERVER_PORT      6388  /* TCP port. */
 #define LOG_MAX_LEN                     1024 /* Default maximum length of syslog messages.*/
+#define NET_IP_STR_LEN                  46 /* INET6_ADDRSTRLEN is 46, but we need to be sure */
 
 struct Server {
     pid_t pid;                          /* Main process pid. */
@@ -83,10 +86,18 @@ struct Server {
     int ipfd_count;                     /* Used slots in ipfd[] */
     char *bindaddr[CONFIG_BINDADDR_MAX]; /* Addresses we should bind to */
     int bindaddr_count;                 /* Number of addresses in server.bindaddr[] */
-    char neterr[ANET_ERR_LEN];   /* Error buffer for anet.c */
+    char neterr[ANET_ERR_LEN];          /* Error buffer for anet.c */
 };
 
+/*-----------------------------------------------------------------------------
+ * Extern declarations
+ *----------------------------------------------------------------------------*/
+
+extern struct Server server;
+
 int listenToPort(int port, int *fds, int *count);
+void acceptTcpHandler(aeEventLoop *el, int fd, void *privdata, int mask);
+void setupSignalHandlers(void);
 #ifdef __GNUC__
 void serverLog(int level, const char *fmt, ...)
     __attribute__((format(printf, 2, 3)));
