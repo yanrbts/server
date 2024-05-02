@@ -42,9 +42,14 @@
 #include <netinet/in.h>
 #include <signal.h>
 
+typedef long long mstime_t; /* millisecond time type. */
+
 #include "ae.h"      /* Event driven programming library */
+#include "sds.h"     /* Dynamic safe strings */
+#include "adlist.h"  /* Linked lists */
 #include "zmalloc.h" /* total memory usage aware version of malloc/free */
 #include "anet.h"    /* Networking the easy way */
+#include "util.h"    /* Misc functions useful in many places */
 
 /* Error codes */
 #define C_OK                            0
@@ -58,12 +63,37 @@
 #define LL_NOTICE                       2
 #define LL_WARNING                      3
 #define LL_RAW                          (1<<10) /* Modifier to log without timestamp */
+#define CONFIG_DEFAULT_VERBOSITY        LL_NOTICE
 
+/* Static server configuration */
+#define CONFIG_DEFAULT_HZ               10        /* Time interrupt calls/sec. */
 #define CONFIG_DEFAULT_MAX_CLIENTS      10000
+#define CONFIG_DEFAULT_TCP_KEEPALIVE    300
 #define CONFIG_BINDADDR_MAX             16
-#define CONFIG_DEFAULT_SERVER_PORT      6388  /* TCP port. */
-#define LOG_MAX_LEN                     1024 /* Default maximum length of syslog messages.*/
-#define NET_IP_STR_LEN                  46 /* INET6_ADDRSTRLEN is 46, but we need to be sure */
+#define CONFIG_DEFAULT_SERVER_PORT      6388      /* TCP port. */
+#define CONFIG_DEFAULT_SYSLOG_ENABLED   0
+#define CONFIG_DEFAULT_LOGFILE          ""
+#define CONFIG_DEFAULT_CLIENT_TIMEOUT   0         /* Default client timeout: infinite */
+
+#define LOG_MAX_LEN                     1024      /* Default maximum length of syslog messages.*/
+#define NET_IP_STR_LEN                  46        /* INET6_ADDRSTRLEN is 46, but we need to be sure */
+
+/* Protocol and I/O related defines */
+#define PROTO_IOBUF_LEN                 (1024*16)  /* Generic I/O buffer size */
+#define PROTO_REPLY_CHUNK_BYTES         (16*1024)  /* 16k output buffer */
+
+/* With multiplexing we need to take per-client state.
+ * Clients are taken in a linked list. */
+typedef struct client {
+    uint64_t id;            /* Client incremental unique ID. */
+    int fd;                 /* Client socket. */
+    sds querybuf;           /* Buffer we use to accumulate client queries. */
+    /* Response buffer */
+    int bufpos;
+    char buf[PROTO_REPLY_CHUNK_BYTES];
+    time_t lastinteraction;         /* Time of the last interaction, used for timeout */
+    listNode *client_list_node;     /* list node in client list */
+} client;
 
 struct Server {
     pid_t pid;                          /* Main process pid. */
@@ -76,17 +106,26 @@ struct Server {
     long long mstime;                   /* Like 'unixtime' but with milliseconds resolution. */
     /* Configuration */
     int verbosity;                      /* Loglevel in redis.conf */
+    int maxidletime;                    /* Client timeout in seconds */
+    int tcpkeepalive;                   /* Set SO_KEEPALIVE if non-zero. */
+    int config_hz;                      /* Configured HZ value. May be different than
+                                            the actual 'hz' field value if dynamic-hz
+                                            is enabled. */
+    int hz;                             /* serverCron() calls frequency in hertz */
     /* Logging */
     char *logfile;                      /* Path of log file */
     int syslog_enabled;                 /* Is syslog enabled? */
     /* Networking */
     int port;                           /* TCP listening port */
     int tcp_backlog;                    /* TCP listen() backlog */
+    uint64_t next_client_id;            /* Next client unique ID. Incremental. */
     int ipfd[CONFIG_BINDADDR_MAX];      /* TCP socket file descriptors */
     int ipfd_count;                     /* Used slots in ipfd[] */
     char *bindaddr[CONFIG_BINDADDR_MAX]; /* Addresses we should bind to */
     int bindaddr_count;                 /* Number of addresses in server.bindaddr[] */
     char neterr[ANET_ERR_LEN];          /* Error buffer for anet.c */
+    client *current_client;             /* Current client, only used on crash report */
+    list *clients;                      /* List of active clients */
 };
 
 /*-----------------------------------------------------------------------------
@@ -95,9 +134,18 @@ struct Server {
 
 extern struct Server server;
 
+/* networking.c -- Networking and Client related operations */
+client *createClient(int fd);
+void freeClient(client *c);
 int listenToPort(int port, int *fds, int *count);
 void acceptTcpHandler(aeEventLoop *el, int fd, void *privdata, int mask);
 void setupSignalHandlers(void);
+void readQueryFromClient(aeEventLoop *el, int fd, void *privdata, int mask);
+void processInputBuffer(client *c);
+void updateCachedTime(void);
+long long ustime(void);
+void unlinkClient(client *c);
+void linkClient(client *c);
 #ifdef __GNUC__
 void serverLog(int level, const char *fmt, ...)
     __attribute__((format(printf, 2, 3)));

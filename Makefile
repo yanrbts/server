@@ -1,4 +1,4 @@
-CFLAGS  += -std=c99 -Wall -O2 -D_REENTRANT
+CFLAGS  += -std=c99 -Wall -O2 -D_REENTRANT -g
 LIBS    := -lm -lssl -lcrypto -lpthread
 
 TARGET  := $(shell uname -s | tr '[A-Z]' '[a-z]' 2>/dev/null || echo unknown)
@@ -17,7 +17,7 @@ else ifeq ($(TARGET), freebsd)
 	LDFLAGS += -Wl,-E
 endif
 
-SRC  := server.c zmalloc.c ae.c localtime.c anet.c networking.c
+SRC  := server.c zmalloc.c ae.c sds.c adlist.c localtime.c anet.c networking.c util.c
 BIN  := kxykserver
 VER  ?= $(shell git describe --tags --always --dirty)
 

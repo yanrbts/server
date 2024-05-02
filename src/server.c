@@ -112,6 +112,34 @@ void serverLog(int level, const char *fmt, ...) {
     serverLogRaw(level, msg);
 }
 
+/* Log a fixed message without printf-alike capabilities, in a way that is
+ * safe to call from a signal handler.
+ *
+ * We actually use this only for signals that are not fatal from the point
+ * of view of Redis. Signals that are going to kill the server anyway and
+ * where we need printf-alike features are served by serverLog(). */
+void serverLogFromHandler(int level, const char *msg) {
+    int fd;
+    int log_to_stdout = server.logfile[0] == '\0';
+    char buf[64];
+
+    if ((level & 0xff) < server.verbosity)
+        return;
+    fd = log_to_stdout ? STDOUT_FILENO :
+                         open(server.logfile, O_APPEND|O_CREAT|O_WRONLY, 0644);
+    if (fd == -1) return;
+    ll2string(buf, sizeof(buf), getpid());
+    if (write(fd, buf, strlen(buf)) == -1) goto err;
+    if (write(fd, ":signal-handler (", 17) == -1) goto err;
+    ll2string(buf, sizeof(buf), time(NULL));
+    if (write(fd, buf, strlen(buf)) == -1) goto err;
+    if (write(fd, ") ", 2) == -1) goto err;
+    if (write(fd, msg, strlen(msg)) == -1) goto err;
+    if (write(fd, "\n", 1) == -1) goto err;
+err:
+    if (!log_to_stdout) close(fd);
+}
+
 static void sigShutdownHandler(int sig) {
     char *msg;
 
@@ -125,13 +153,13 @@ static void sigShutdownHandler(int sig) {
     default:
         msg = "Received shutdown signal, scheduling shutdown...";
     }
-    serverLog(LL_WARNING, "%s\n", msg);
-    exit(0);
+    serverLogFromHandler(LL_WARNING, msg);
+    exit(1);
 }
 
 void setupSignalHandlers(void) {
     struct sigaction act;
-
+    
     /* When the SA_SIGINFO flag is set in sa_flags then sa_sigaction is used.
      * Otherwise, sa_handler is used. */
     sigemptyset(&act.sa_mask);
@@ -218,6 +246,122 @@ int listenToPort(int port, int *fds, int *count) {
     return C_OK;
 }
 
+/* Return the UNIX time in microseconds */
+long long ustime(void) {
+    struct timeval tv;
+    long long ust;
+
+    gettimeofday(&tv, NULL);
+    ust = ((long long)tv.tv_sec)*1000000;
+    ust += tv.tv_usec;
+    return ust;
+}
+
+/* Return the UNIX time in milliseconds */
+mstime_t mstime(void) {
+    return ustime()/1000;
+}
+
+/* We take a cached value of the unix time in the global state because with
+ * virtual memory and aging there is to store the current time in objects at
+ * every object access, and accuracy is not needed. To access a global var is
+ * a lot faster than calling time(NULL) */
+void updateCachedTime(void) {
+    time_t unixtime = time(NULL);
+    atomicSet(server.unixtime, unixtime);
+    server.mstime = mstime();
+    /* To get information about daylight saving time, we need to call localtime_r
+     * and cache the result. However calling localtime_r in this context is safe
+     * since we will never fork() while here, in the main thread. The logging
+     * function will call a thread safe version of localtime that has no locks. */
+    struct tm tm;
+    localtime_r(&server.unixtime,&tm);
+    server.daylight_active = tm.tm_isdst;
+}
+
+/* Check for timeouts. Returns non-zero if the client was terminated.
+ * The function gets the current time in milliseconds as argument since
+ * it gets called multiple times in a loop, so calling gettimeofday() for
+ * each iteration would be costly without any actual gain. */
+int clientsCronHandleTimeout(client *c, mstime_t now_ms) {
+    time_t now = now_ms/1000;
+    serverLog(LL_WARNING,"clientsCronHandleTimeout");
+
+    if (server.maxidletime &&
+        (now - c->lastinteraction > server.maxidletime)) {
+        serverLog(LL_WARNING,"Closing idle client");
+        freeClient(c);
+        return 1;
+    }
+    return 0;
+}
+
+/* This function is called by serverCron() and is used in order to perform
+ * operations on clients that are important to perform constantly. For instance
+ * we use this function in order to disconnect clients after a timeout, including
+ * clients blocked in some blocking command with a non-zero timeout.
+ *
+ * The function makes some effort to process all the clients every second, even
+ * if this cannot be strictly guaranteed, since serverCron() may be called with
+ * an actual frequency lower than server.hz in case of latency events like slow
+ * commands.
+ *
+ * It is very important for this function, and the functions it calls, to be
+ * very fast: sometimes server has tens of hundreds of connected clients, and the
+ * default server.hz value is 10, so sometimes here we need to process thousands
+ * of clients per second, turning this function into a source of latency.
+ */
+#define CLIENTS_CRON_MIN_ITERATIONS 5
+void clientsCron(void) {
+    /* Try to process at least numclients/server.hz of clients
+     * per call. Since normally (if there are no big latency events) this
+     * function is called server.hz times per second, in the average case we
+     * process all the clients in 1 second. */
+    int numclients = listLength(server.clients);
+    int iterations = numclients/server.hz;
+    mstime_t now = mstime();
+
+    /* Process at least a few clients while we are at it, even if we need
+     * to process less than CLIENTS_CRON_MIN_ITERATIONS to meet our contract
+     * of processing each client once per second. */
+    if (iterations < CLIENTS_CRON_MIN_ITERATIONS)
+        iterations = (numclients < CLIENTS_CRON_MIN_ITERATIONS) ?
+                     numclients : CLIENTS_CRON_MIN_ITERATIONS;
+    
+    while (listLength(server.clients) && iterations--) {
+        client *c;
+        listNode *head;
+
+        /* Rotate the list, take the current head, process.
+         * This way if the client must be removed from the list it's the
+         * first element and we don't incur into O(N) computation. */
+        listRotate(server.clients);
+        head = listFirst(server.clients);
+        c = listNodeValue(head);
+        /* The following functions do different service checks on the client.
+         * The protocol is that they return non-zero if the client was
+         * terminated. */
+        if (clientsCronHandleTimeout(c,now)) continue;
+    }
+}
+
+int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
+    serverLog(LL_WARNING, "serverCron function: %ld", server.unixtime);
+    UNUSED(eventLoop);
+    UNUSED(id);
+    UNUSED(clientData);
+
+    /* Update the time cache. */
+    updateCachedTime();
+
+    server.hz = server.config_hz;
+
+    /* We need to do a few operations on clients asynchronously. */
+    clientsCron();
+
+    return 1000/server.hz;
+}
+
 void initServer(void) {
     int j;
 
@@ -227,7 +371,18 @@ void initServer(void) {
 
     server.port = CONFIG_DEFAULT_SERVER_PORT;
     server.maxclients = CONFIG_DEFAULT_MAX_CLIENTS;
+    server.tcpkeepalive = CONFIG_DEFAULT_TCP_KEEPALIVE;
+    server.syslog_enabled = CONFIG_DEFAULT_SYSLOG_ENABLED;
+    server.verbosity = CONFIG_DEFAULT_VERBOSITY;
+    server.logfile = zstrdup(CONFIG_DEFAULT_LOGFILE);
+    server.config_hz = CONFIG_DEFAULT_HZ;
+    server.maxidletime = CONFIG_DEFAULT_CLIENT_TIMEOUT;
+
+    server.hz = server.config_hz;
     server.pid = getpid();
+    server.current_client = NULL;
+    server.clients = listCreate();
+    server.next_client_id = 1;
     server.el = aeCreateEventLoop(server.maxclients);
     if (server.el == NULL) {
         serverLog(LL_WARNING,
@@ -245,6 +400,14 @@ void initServer(void) {
     /* Abort if there are no listening sockets at all. */
     if (server.ipfd_count == 0) {
         serverLog(LL_WARNING, "Configured to not listen anywhere, exiting.");
+        exit(1);
+    }
+
+    /* Create the timer callback, this is our way to process many background
+     * operations incrementally, like clients timeout, eviction of unaccessed
+     * expired keys and so forth. */
+    if (aeCreateTimeEvent(server.el, 1, serverCron, NULL, NULL) == AE_ERR) {
+        serverLog(LL_WARNING, "Can't create event loop timers.");
         exit(1);
     }
 

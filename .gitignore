@@ -6,3 +6,4 @@ dump.rdb
 .prerequisites
 *.dSYM
 Makefile.dep
+kxykserver
