@@ -52,6 +52,13 @@
 #include "server.h"
 #include "atomicvar.h"
 
+char *ascii_logo ="\n" 
+"    __                                      | Version: 1.0.0\n"                       
+"   / /__________  ______   _____  _____     | Port: %d \n"
+"  / //_/ ___/ _ \\/ ___/ | / / _ \\/ ___/     | PID: %ld\n"
+" / ,< (__  )  __/ /   | |/ /  __/ /         | Author: Yanruibing\n"   
+"/_/|_/____/\\___/_/    |___/\\___/_/          | Web: http://www.kxyk.com \n\n";
+
 struct Server server;
 
 /*============================ Utility functions ============================ */
@@ -110,6 +117,13 @@ void serverLog(int level, const char *fmt, ...) {
     va_end(ap);
 
     serverLogRaw(level, msg);
+}
+
+void showLogo(void) {
+    char *buf = zmalloc(1024*16);
+    snprintf(buf,1024*16,ascii_logo, server.port, (long)getpid());
+    serverLogRaw(LL_NOTICE|LL_RAW, buf);
+    zfree(buf);
 }
 
 /* Log a fixed message without printf-alike capabilities, in a way that is
@@ -285,8 +299,7 @@ void updateCachedTime(void) {
  * each iteration would be costly without any actual gain. */
 int clientsCronHandleTimeout(client *c, mstime_t now_ms) {
     time_t now = now_ms/1000;
-    serverLog(LL_WARNING,"clientsCronHandleTimeout");
-
+    
     if (server.maxidletime &&
         (now - c->lastinteraction > server.maxidletime)) {
         serverLog(LL_WARNING,"Closing idle client");
@@ -346,7 +359,6 @@ void clientsCron(void) {
 }
 
 int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
-    serverLog(LL_WARNING, "serverCron function: %ld", server.unixtime);
     UNUSED(eventLoop);
     UNUSED(id);
     UNUSED(clientData);
@@ -362,13 +374,7 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
     return 1000/server.hz;
 }
 
-void initServer(void) {
-    int j;
-
-    signal(SIGHUP, SIG_IGN);
-    signal(SIGPIPE, SIG_IGN);
-    setupSignalHandlers();
-
+void initServerConfig(void) {
     server.port = CONFIG_DEFAULT_SERVER_PORT;
     server.maxclients = CONFIG_DEFAULT_MAX_CLIENTS;
     server.tcpkeepalive = CONFIG_DEFAULT_TCP_KEEPALIVE;
@@ -377,13 +383,22 @@ void initServer(void) {
     server.logfile = zstrdup(CONFIG_DEFAULT_LOGFILE);
     server.config_hz = CONFIG_DEFAULT_HZ;
     server.maxidletime = CONFIG_DEFAULT_CLIENT_TIMEOUT;
+}
+
+void initServer(void) {
+    int j;
+
+    signal(SIGHUP, SIG_IGN);
+    signal(SIGPIPE, SIG_IGN);
+    setupSignalHandlers();
 
     server.hz = server.config_hz;
     server.pid = getpid();
     server.current_client = NULL;
     server.clients = listCreate();
+    server.clients_pending_write = listCreate();
     server.next_client_id = 1;
-    server.el = aeCreateEventLoop(server.maxclients);
+    server.el = aeCreateEventLoop(server.maxclients + CONFIG_FDSET_INCR);
     if (server.el == NULL) {
         serverLog(LL_WARNING,
             "Failed creating the event loop. Error message: '%s'",
@@ -429,7 +444,10 @@ int main(int argc, char **argv) {
     srand(time(NULL)^getpid());
     gettimeofday(&tv,NULL);
 
+    initServerConfig();
     initServer();
+    showLogo();
+    
     aeMain(server.el);
     aeDeleteEventLoop(server.el);
     return 0;

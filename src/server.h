@@ -74,6 +74,13 @@ typedef long long mstime_t; /* millisecond time type. */
 #define CONFIG_DEFAULT_SYSLOG_ENABLED   0
 #define CONFIG_DEFAULT_LOGFILE          ""
 #define CONFIG_DEFAULT_CLIENT_TIMEOUT   0         /* Default client timeout: infinite */
+#define CONFIG_MIN_RESERVED_FDS         32
+
+/* When configuring the server eventloop, we setup it so that the total number
+ * of file descriptors we can handle are server.maxclients + RESERVED_FDS +
+ * a few more to stay safe. Since RESERVED_FDS defaults to 32, we add 96
+ * in order to make sure of not over provisioning more than 128 fds. */
+#define CONFIG_FDSET_INCR               (CONFIG_MIN_RESERVED_FDS+96)
 
 #define LOG_MAX_LEN                     1024      /* Default maximum length of syslog messages.*/
 #define NET_IP_STR_LEN                  46        /* INET6_ADDRSTRLEN is 46, but we need to be sure */
@@ -126,6 +133,14 @@ struct Server {
     char neterr[ANET_ERR_LEN];          /* Error buffer for anet.c */
     client *current_client;             /* Current client, only used on crash report */
     list *clients;                      /* List of active clients */
+    list *clients_pending_write;        /* There is to write or install handler. */
+};
+
+typedef void CommandProc(client *c);
+struct Command {
+    char *name;
+    CommandProc *proc;
+    long long microseconds;
 };
 
 /*-----------------------------------------------------------------------------
