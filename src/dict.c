@@ -205,3 +205,173 @@ int dictRehash(dict *d, int n) {
     return 1;
 }
 
+long long timeInMilliseconds(void) {
+    struct timeval tv;
+
+    gettimeofday(&tv, NULL);
+    return (((long long)tv.tv_sec)*1000) + (tv.tv_usec/1000);
+}
+
+/* Rehash for an amount of time between ms milliseconds and ms+1 milliseconds */
+int dictRehashMilliseconds(dict *d, int ms) {
+    long long start = timeInMilliseconds();
+    int rehashes = 0;
+
+    while (dictRehash(d, 100)) {
+        rehashes += 100;
+        if (timeInMilliseconds()-start > ms) break;
+    }
+    return rehashes;
+}
+
+/* This function performs just a step of rehashing, and only if there are
+ * no safe iterators bound to our hash table. When we have iterators in the
+ * middle of a rehashing we can't mess with the two hash tables otherwise
+ * some element can be missed or duplicated.
+ *
+ * This function is called by common lookup or update operations in the
+ * dictionary so that the hash table automatically migrates from H1 to H2
+ * while it is actively used. */
+static void _dictRehashStep(dict *d) {
+    if (d->iterators == 0) dictRehash(d, 1);
+}
+
+/* Add an element to the target hash table */
+int dictAdd(dict *d, void *key, void *val) {
+    dictEntry *entry = dictAddRaw(d, key, NULL);
+
+    if (!entry) return DICT_ERR;
+    dictSetVal(d, entry,val);
+    return DICT_OK;
+}
+
+/* Low level add or find:
+ * This function adds the entry but instead of setting a value returns the
+ * dictEntry structure to the user, that will make sure to fill the value
+ * field as he wishes.
+ *
+ * This function is also directly exposed to the user API to be called
+ * mainly in order to store non-pointers inside the hash value, example:
+ *
+ * entry = dictAddRaw(dict,mykey,NULL);
+ * if (entry != NULL) dictSetSignedIntegerVal(entry,1000);
+ *
+ * Return values:
+ *
+ * If key already exists NULL is returned, and "*existing" is populated
+ * with the existing entry if existing is not NULL.
+ *
+ * If key was added, the hash entry is returned to be manipulated by the caller.
+ */
+dictEntry *dictAddRaw(dict *d, void *key, dictEntry **existing) {
+    long index;
+    dictEntry *entry;
+    dictht *ht;
+
+    if (dictIsRehashing(d)) _dictRehashStep(d);
+
+    /* Get the index of the new element, or -1 if
+     * the element already exists. */
+    if ((index = _dictKeyIndex(d, key, dictHashKey(d, key), existing)) == -1)
+        return NULL;
+    
+    /* Allocate the memory and store the new entry.
+     * Insert the element in top, with the assumption that in a database
+     * system it is more likely that recently added entries are accessed
+     * more frequently. */
+    ht = dictIsRehashing(d) ? &d->ht[1] : &d->ht[0];
+    entry = zmalloc(sizeof(*entry));
+    entry->next = ht->table[index];
+    ht->table[index] = entry;
+    ht->used++;
+
+    /* Set the hash entry fields. */
+    dictSetKey(d, entry, key);
+    return entry;
+}
+
+/* Add or Overwrite:
+ * Add an element, discarding the old value if the key already exists.
+ * Return 1 if the key was added from scratch, 0 if there was already an
+ * element with such key and dictReplace() just performed a value update
+ * operation. */
+int dictReplace(dict *d, void *key, void *val) {
+    dictEntry *entry, *existing, auxentry;
+
+    /* Try to add the element. If the key
+     * does not exists dictAdd will succeed. */
+    entry = dictAddRaw(d, key, &existing);
+    if (entry) {
+        dictSetVal(d, entry, val);
+        return 1;
+    }
+
+    /* Set the new value and free the old one. Note that it is important
+     * to do that in this order, as the value may just be exactly the same
+     * as the previous one. In this context, think to reference counting,
+     * you want to increment (set), and then decrement (free), and not the
+     * reverse. */
+    auxentry = *existing;
+    dictSetVal(d, existing, val);
+    dictFreeVal(d, &auxentry);
+    return 0;
+}
+
+/* Add or Find:
+ * dictAddOrFind() is simply a version of dictAddRaw() that always
+ * returns the hash entry of the specified key, even if the key already
+ * exists and can't be added (in that case the entry of the already
+ * existing key is returned.)
+ *
+ * See dictAddRaw() for more information. */
+dictEntry *dictAddOrFind(dict *d, void *key) {
+    dictEntry *entry, *existing;
+    entry = dictAddRaw(d, key, &existing);
+    return entry ? entry : existing;
+}
+
+/* Search and remove an element. This is an helper function for
+ * dictDelete() and dictUnlink(), please check the top comment
+ * of those functions. */
+static dictEntry *dictGenericDelete(dict *d, const void *key, int nofree) {
+    uint64_t h, idx;
+    dictEntry *he, *prevHe;
+    int table;
+
+    if (d->ht[0].used == 0 && d->ht[1].used == 0) return NULL;
+
+    if (dictIsRehashing(d)) _dictRehashStep(d);
+    h = dictHashKey(d, key);
+
+    for (table = 0; table <= 1; table++) {
+        idx = h & d->ht[table].sizemask;
+        he = d->ht[table].table[idx];
+        prevHe = NULL;
+        while (he) {
+            if (key == he->key || dictCompareKeys(d, key, he->key)) {
+                /* Unlink the element from the list */
+                if (prevHe)
+                    prevHe->next = he->next;
+                else
+                    d->ht[table].table[idx] = he->next;
+                if (!nofree) {
+                    dictFreeKey(d, he);
+                    dictFreeVal(d, he);
+                    zfree(he);
+                }
+                d->ht[table].used--;
+                return he;
+            }
+            prevHe = he;
+            he = he->next;
+        }
+        if (!dictIsRehashing(d)) break;
+    }
+    return NULL; /* not found */
+}
+
+/* Remove an element, returning DICT_OK on success or DICT_ERR if the
+ * element was not found. */
+int dictDelete(dict *ht, const void *key) {
+    return dictGenericDelete(ht,key,0) ? DICT_OK : DICT_ERR;
+}
