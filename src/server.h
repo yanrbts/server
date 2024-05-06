@@ -46,6 +46,7 @@ typedef long long mstime_t; /* millisecond time type. */
 
 #include "ae.h"      /* Event driven programming library */
 #include "sds.h"     /* Dynamic safe strings */
+#include "dict.h"    /* Hash tables */
 #include "adlist.h"  /* Linked lists */
 #include "zmalloc.h" /* total memory usage aware version of malloc/free */
 #include "anet.h"    /* Networking the easy way */
@@ -89,11 +90,21 @@ typedef long long mstime_t; /* millisecond time type. */
 #define PROTO_IOBUF_LEN                 (1024*16)  /* Generic I/O buffer size */
 #define PROTO_REPLY_CHUNK_BYTES         (16*1024)  /* 16k output buffer */
 
+/* database representation. There are multiple databases identified
+ * by integers from 0 (the default database) up to the max configured
+ * database. The database number is the 'id' field in the structure. */
+typedef struct kxykDb {
+    dict *dict;                 /* The keyspace for this DB */
+    int id;                     /* Database ID */
+    long long avg_ttl;          /* Average TTL, just for stats */
+} kxykDb;
+
 /* With multiplexing we need to take per-client state.
  * Clients are taken in a linked list. */
 typedef struct client {
     uint64_t id;            /* Client incremental unique ID. */
     int fd;                 /* Client socket. */
+    kxykDb *db;             /* Pointer to currently SELECTed DB. */
     sds querybuf;           /* Buffer we use to accumulate client queries. */
     /* Response buffer */
     int bufpos;
@@ -118,7 +129,9 @@ struct Server {
     int config_hz;                      /* Configured HZ value. May be different than
                                             the actual 'hz' field value if dynamic-hz
                                             is enabled. */
+    int dbnum;                          /* Total number of configured DBs */
     int hz;                             /* serverCron() calls frequency in hertz */
+    kxykDb *db;
     /* Logging */
     char *logfile;                      /* Path of log file */
     int syslog_enabled;                 /* Is syslog enabled? */
