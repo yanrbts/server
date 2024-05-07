@@ -18,14 +18,46 @@
 
 #include "server.h"
 
-typedef struct Kuser {
-    char *name; 
-} Kuser;
+/* The actual Object */
+#define OBJ_MACHINE 0   /* Querying encrypted files on the entire machine is generally not used.*/
+#define OBJ_USE 1       /* Query all encrypted files of a user */
+#define OBJ_FILE 2      /* Query a single encrypted file */
 
-typedef struct Kdata {
-    char *key;          /* data key name */
-    unsigned type:4;    /* data type */
-    void *ptr;          /* data pointer */
-} Kdata;
+#define LRU_BITS 24
+#define LRU_CLOCK_MAX ((1<<LRU_BITS)-1) /* Max value of obj->lru */
+#define LRU_CLOCK_RESOLUTION 1000 /* LRU clock resolution in ms */
+
+typedef struct Kuser Kuser;
+typedef struct Kmachine Kmachine;
+
+typedef struct Kfile {
+    char *filename;             /* file name */
+    char fullpath[PATH_MAX];    /* Full file path */
+    uint64_t uuid;              /* file uuid */
+    uint64_t applynum;          /* Number of applications */
+    uint64_t authnum;           /* Number of authorizations */
+    Kuser *user;                /* Pointer to Kuser struct */
+} Kfile;
+
+struct Kuser {
+    char *name;         /* user name */
+    list *files;        /* Current user's file list */
+    Kmachine *pmch;     /* User's machine */
+};
+
+struct Kmachine {
+    uint64_t uuid;
+    list *users;
+};
+
+typedef struct KObject {
+    unsigned type:4;        /* data type */
+    unsigned lru:LRU_BITS; /* LRU time (relative to global lru_clock) or
+                            * LFU data (least significant 8 bits frequency
+                            * and most significant 16 bits access time). */
+    void *ptr;              /* data pointer */
+} KObject;
+
+KObject *createObject(int type, void *ptr);
 
 #endif

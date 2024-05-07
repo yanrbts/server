@@ -14,3 +14,7 @@
  * limitations under the License.
  */
 #include "data.h"
+
+KObject *createObject(int type, void *ptr) {
+    
+}
