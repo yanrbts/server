@@ -182,3 +182,15 @@ void processInputBuffer(client *c) {
     printf("%s\n", c->querybuf);
     server.current_client = NULL;
 }
+
+void parseCmdJson(sds js) {
+    cJSON *root;
+
+    root = cJSON_Parse(js);
+    if (root == NULL) {
+        serverLog(LL_WARNING, "Software Failure. Press left mouse button to continue");
+        return;
+    }
+
+    cJSON_Delete(root);
+}

@@ -1,0 +1,11 @@
+{
+    "action":"ENCRYPT",
+    "machine":"f526255265340d994510f8d1652e1eb1",
+    "user":"admin",
+    "file": [
+        {
+            "filename":"filename",
+            "uuid":"f526255265340d994510f8d1652e1eb1"
+        }
+    ]  
+}

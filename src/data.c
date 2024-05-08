@@ -14,7 +14,57 @@
  * limitations under the License.
  */
 #include "data.h"
+#include <math.h>
+#include <ctype.h>
 
-KObject *createObject(int type, void *ptr) {
-    
+Kobject *createObject(int type, void *ptr) {
+    Kobject *o = zmalloc(sizeof(*o));
+    o->type = type;
+    o->ptr = ptr;
+
+    return o;
 }
+
+Kobject *createMachineObject(void) {
+    Kmachine *km = createMachine();
+    Kobject *o = createObject(OBJ_MACHINE, km);
+    return o;
+}
+
+Kobject *createUserObject(void) {
+    Kuser *u = createUser();
+    Kobject *o = createObject(OBJ_USE, u);
+    return o;
+}
+
+Kobject *createFileObject(void) {
+    Kfile *f = createFile();
+    Kobject *o = createObject(OBJ_FILE, f);
+    return o;
+}
+
+Kmachine *createMachine(void) {
+    Kmachine *km = zmalloc(sizeof(*km));
+    km->users = listCreate();
+    km->uuid = 0;
+    return km;
+}
+
+Kuser *createUser(void) {
+    Kuser *u = zmalloc(sizeof(*u));
+    u->files = listCreate();
+    u->name = NULL;
+    u->pmch = NULL;
+    return u;
+}
+
+Kfile *createFile(void) {
+    Kfile *f = zmalloc(sizeof(*f));
+    f->applynum = 0;
+    f->authnum = 0;
+    f->filename = NULL;
+    f->user = NULL;
+    f->uuid = 0;
+    return f;
+}
+

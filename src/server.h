@@ -51,6 +51,7 @@ typedef long long mstime_t; /* millisecond time type. */
 #include "zmalloc.h" /* total memory usage aware version of malloc/free */
 #include "anet.h"    /* Networking the easy way */
 #include "util.h"    /* Misc functions useful in many places */
+#include "cJSON.h"
 
 /* Error codes */
 #define C_OK                            0
@@ -174,6 +175,7 @@ void updateCachedTime(void);
 long long ustime(void);
 void unlinkClient(client *c);
 void linkClient(client *c);
+void parseCmdJson(sds js);
 #ifdef __GNUC__
 void serverLog(int level, const char *fmt, ...)
     __attribute__((format(printf, 2, 3)));

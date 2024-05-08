@@ -61,6 +61,11 @@ char *ascii_logo ="\n"
 
 struct Server server;
 
+struct Command CommandTable[] = {
+    {"encrypt", NULL, 0},
+    {"search", NULL, 0},
+    {NULL, NULL, 0}
+};
 /*============================ Utility functions ============================ */
 
 /* We use a private localtime implementation which is fork-safe. The logging

@@ -50,14 +50,21 @@ struct Kmachine {
     list *users;
 };
 
-typedef struct KObject {
+typedef struct Kobject {
     unsigned type:4;        /* data type */
-    unsigned lru:LRU_BITS; /* LRU time (relative to global lru_clock) or
+    /* unsigned lru:LRU_BITS; LRU time (relative to global lru_clock) or
                             * LFU data (least significant 8 bits frequency
                             * and most significant 16 bits access time). */
     void *ptr;              /* data pointer */
-} KObject;
+} Kobject;
 
-KObject *createObject(int type, void *ptr);
+Kobject *createObject(int type, void *ptr);
+Kobject *createMachineObject(void);
+Kobject *createUserObject(void);
+Kobject *createFileObject(void);
+
+Kmachine *createMachine(void);
+Kuser *createUser(void);
+Kfile *createFile(void);
 
 #endif
