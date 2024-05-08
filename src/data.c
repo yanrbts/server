@@ -17,6 +17,7 @@
 #include <math.h>
 #include <ctype.h>
 
+
 Kobject *createObject(int type, void *ptr) {
     Kobject *o = zmalloc(sizeof(*o));
     o->type = type;
@@ -68,3 +69,66 @@ Kfile *createFile(void) {
     return f;
 }
 
+/*--------------------------------API FUNCTION-------------------------------------*/
+
+int api_encrypt_file(cJSON *root) {
+    int ret = -1;
+    cJSON *jk, *ju, *jf;
+    Kmachine *km;
+    Kuser *ku;
+    Kfile *kf;
+    Kobject *o;
+
+    /* machine */
+    jk = cJSON_GetObjectItem(root, "machine");
+    if (cJSON_IsString(jk) && (jk->valuestring != NULL)) {
+        km = createMachine();
+        // km->uuid
+    } else {
+        serverLog(LL_RAW, "encry file machine node format is incorrect");
+        ret = -1;
+        goto err;
+    }
+
+    /* user */
+    ju = cJSON_GetObjectItem(root, "user");
+    if (cJSON_IsString(ju) && (ju->valuestring != NULL)) {
+        ku = createUser();
+    } else {
+        serverLog(LL_RAW, "encry file user node format is incorrect");
+        ret = -1;
+        goto err;
+    }
+    /* files */
+    jf = cJSON_GetObjectItem(root, "file");
+    if (cJSON_IsArray(jf)) {
+        int count = cJSON_GetArraySize(jf);
+
+        for (int i = 0; i < count; i++) {
+            cJSON *file_object = cJSON_GetArrayItem(jf, i);
+
+            kf = createFile();
+            
+            cJSON *filename = cJSON_GetObjectItem(file_object, "filename");
+            if (cJSON_IsString(filename) && (filename->valuestring != NULL)) {
+                printf("Filename %d: %s\n", i+1, filename->valuestring);
+            }
+
+            cJSON *uuid = cJSON_GetObjectItem(file_object, "uuid");
+            if (cJSON_IsString(uuid) && (uuid->valuestring != NULL)) {
+                printf("UUID %d: %s\n", i+1, uuid->valuestring);
+            }
+        }
+    } else {
+        ret = -1;
+        goto err;
+    }
+
+    listAddNodeTail(km->users, ku);
+    listAddNodeHead(ku->files, kf);
+    
+    o = createObject(OBJ_MACHINE, km);
+    dictAdd(server.db[0].dict, &km->uuid, o);
+err:
+    return ret;
+}

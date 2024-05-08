@@ -185,11 +185,21 @@ void processInputBuffer(client *c) {
 
 void parseCmdJson(sds js) {
     cJSON *root;
+    cJSON *action;
 
     root = cJSON_Parse(js);
     if (root == NULL) {
-        serverLog(LL_WARNING, "Software Failure. Press left mouse button to continue");
+        serverLog(LL_RAW, "json format is incorrect");
         return;
+    }
+
+    action = cJSON_GetObjectItem(root, "action");
+    if (cJSON_IsString(action) && (action->valuestring != NULL)) {
+        if (strcmp(action->valuestring, "ENCRYPT") == 0) {
+            
+        }
+    } else {
+        serverLog(LL_WARNING, "json data field is incorrect");
     }
 
     cJSON_Delete(root);

@@ -67,4 +67,6 @@ Kmachine *createMachine(void);
 Kuser *createUser(void);
 Kfile *createFile(void);
 
+int api_encrypt_file(cJSON *root);
+
 #endif
