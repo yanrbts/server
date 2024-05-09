@@ -18,7 +18,7 @@ else ifeq ($(TARGET), freebsd)
 endif
 
 SRC  := server.c zmalloc.c ae.c sds.c dict.c siphash.c adlist.c localtime.c anet.c networking.c util.c \
-		data.c cJSON.c
+		data.c cJSON.c db.c
 		
 BIN  := kxykserver
 VER  ?= $(shell git describe --tags --always --dirty)

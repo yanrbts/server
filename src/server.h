@@ -175,6 +175,7 @@ void updateCachedTime(void);
 long long ustime(void);
 void unlinkClient(client *c);
 void linkClient(client *c);
+int selectDb(client *c, int id);
 void parseCmdJson(sds js);
 #ifdef __GNUC__
 void serverLog(int level, const char *fmt, ...)

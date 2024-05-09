@@ -31,22 +31,22 @@ typedef struct Kuser Kuser;
 typedef struct Kmachine Kmachine;
 
 typedef struct Kfile {
-    char *filename;             /* file name */
+    sds filename;               /* file name */
     char fullpath[PATH_MAX];    /* Full file path */
-    uint64_t uuid;              /* file uuid */
+    sds uuid;                   /* file uuid */
     uint64_t applynum;          /* Number of applications */
     uint64_t authnum;           /* Number of authorizations */
     Kuser *user;                /* Pointer to Kuser struct */
 } Kfile;
 
 struct Kuser {
-    char *name;         /* user name */
+    sds name;           /* user name */
     list *files;        /* Current user's file list */
     Kmachine *pmch;     /* User's machine */
 };
 
 struct Kmachine {
-    uint64_t uuid;
+    sds uuid;
     list *users;
 };
 
@@ -67,6 +67,6 @@ Kmachine *createMachine(void);
 Kuser *createUser(void);
 Kfile *createFile(void);
 
-int api_encrypt_file(cJSON *root);
+int api_encrypt_file(cJSON *root, kxykDb *db);
 
 #endif

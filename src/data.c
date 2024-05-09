@@ -47,14 +47,14 @@ Kobject *createFileObject(void) {
 Kmachine *createMachine(void) {
     Kmachine *km = zmalloc(sizeof(*km));
     km->users = listCreate();
-    km->uuid = 0;
+    km->uuid = sdsempty();
     return km;
 }
 
 Kuser *createUser(void) {
     Kuser *u = zmalloc(sizeof(*u));
     u->files = listCreate();
-    u->name = NULL;
+    u->name = sdsempty();
     u->pmch = NULL;
     return u;
 }
@@ -63,27 +63,27 @@ Kfile *createFile(void) {
     Kfile *f = zmalloc(sizeof(*f));
     f->applynum = 0;
     f->authnum = 0;
-    f->filename = NULL;
+    f->filename = sdsempty();
     f->user = NULL;
-    f->uuid = 0;
+    f->uuid = sdsempty();
     return f;
 }
 
 /*--------------------------------API FUNCTION-------------------------------------*/
 
-int api_encrypt_file(cJSON *root) {
-    int ret = -1;
+int api_encrypt_file(cJSON *root, kxykDb *db) {
+    int ret = 0;
     cJSON *jk, *ju, *jf;
     Kmachine *km;
     Kuser *ku;
-    Kfile *kf;
+    Kfile *kf = NULL;
     Kobject *o;
 
     /* machine */
     jk = cJSON_GetObjectItem(root, "machine");
     if (cJSON_IsString(jk) && (jk->valuestring != NULL)) {
         km = createMachine();
-        // km->uuid
+        km->uuid = sdscpy(km->uuid, jk->valuestring);
     } else {
         serverLog(LL_RAW, "encry file machine node format is incorrect");
         ret = -1;
@@ -94,6 +94,7 @@ int api_encrypt_file(cJSON *root) {
     ju = cJSON_GetObjectItem(root, "user");
     if (cJSON_IsString(ju) && (ju->valuestring != NULL)) {
         ku = createUser();
+        ku->name = sdscpy(ku->name, ju->valuestring);
     } else {
         serverLog(LL_RAW, "encry file user node format is incorrect");
         ret = -1;
@@ -105,30 +106,32 @@ int api_encrypt_file(cJSON *root) {
         int count = cJSON_GetArraySize(jf);
 
         for (int i = 0; i < count; i++) {
-            cJSON *file_object = cJSON_GetArrayItem(jf, i);
-
             kf = createFile();
-            
+            cJSON *file_object = cJSON_GetArrayItem(jf, i);
             cJSON *filename = cJSON_GetObjectItem(file_object, "filename");
             if (cJSON_IsString(filename) && (filename->valuestring != NULL)) {
-                printf("Filename %d: %s\n", i+1, filename->valuestring);
+                kf->filename = sdscpy(kf->filename, filename->valuestring);
             }
 
             cJSON *uuid = cJSON_GetObjectItem(file_object, "uuid");
             if (cJSON_IsString(uuid) && (uuid->valuestring != NULL)) {
-                printf("UUID %d: %s\n", i+1, uuid->valuestring);
+                kf->uuid = sdscpy(kf->uuid, uuid->valuestring);
             }
+
+            if (kf->filename && kf->uuid)
+                listAddNodeHead(ku->files, kf);
         }
     } else {
         ret = -1;
         goto err;
     }
 
-    listAddNodeTail(km->users, ku);
-    listAddNodeHead(ku->files, kf);
+    listAddNodeHead(km->users, ku);
     
     o = createObject(OBJ_MACHINE, km);
-    dictAdd(server.db[0].dict, &km->uuid, o);
+    dictAdd(db->dict, &km->uuid, o);
+
+    return ret;
 err:
     return ret;
 }
