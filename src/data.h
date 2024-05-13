@@ -64,8 +64,11 @@ Kobject *createUserObject(void);
 Kobject *createFileObject(void);
 
 Kmachine *createMachine(void);
+void freeMachine(Kmachine *m);
 Kuser *createUser(void);
+void freeUser(Kuser *u);
 Kfile *createFile(void);
+void freeFile(Kfile *f);
 
 int api_encrypt_file(cJSON *root, kxykDb *db);
 

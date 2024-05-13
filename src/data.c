@@ -54,9 +54,25 @@ Kmachine *createMachine(void) {
 Kuser *createUser(void) {
     Kuser *u = zmalloc(sizeof(*u));
     u->files = listCreate();
+    listSetFreeMethod(u->files, freeFile);
     u->name = sdsempty();
     u->pmch = NULL;
     return u;
+}
+
+void freeUser(Kuser *u) {
+    listNode *node, *nextnode;
+
+    if (u == NULL)
+        return;
+
+    // while (listLength(u->files)) {
+    //     node = listFirst(u->files);
+    //     Kfile *f = listNodeValue(node);
+    //     listDelNode(u->files, node);
+    //     freeFile(f);
+    // }
+    listRelease(u->files);
 }
 
 Kfile *createFile(void) {
@@ -67,6 +83,18 @@ Kfile *createFile(void) {
     f->user = NULL;
     f->uuid = sdsempty();
     return f;
+}
+
+void freeFile(Kfile *f) {
+    if (f == NULL)
+        return;
+
+    if (f->filename) 
+        sds_free(f->filename);
+    
+    if (f->uuid)
+        sds_free(f->uuid);
+    zfree(f);
 }
 
 /*--------------------------------API FUNCTION-------------------------------------*/
@@ -118,6 +146,7 @@ int api_encrypt_file(cJSON *root, kxykDb *db) {
                 kf->uuid = sdscpy(kf->uuid, uuid->valuestring);
             }
 
+            /* Add the file to the user's file list */
             if (kf->filename && kf->uuid)
                 listAddNodeHead(ku->files, kf);
         }
@@ -125,7 +154,7 @@ int api_encrypt_file(cJSON *root, kxykDb *db) {
         ret = -1;
         goto err;
     }
-
+    /* Add the user to the machine node to which it belongs */
     listAddNodeHead(km->users, ku);
     
     o = createObject(OBJ_MACHINE, km);
@@ -133,5 +162,13 @@ int api_encrypt_file(cJSON *root, kxykDb *db) {
 
     return ret;
 err:
+    if (km) {
+        sds_free(km->uuid);
+        zfree(km);
+    }
+    if (ku) {
+        sds_free(ku->name);
+        zfree(ku);
+    }
     return ret;
 }
